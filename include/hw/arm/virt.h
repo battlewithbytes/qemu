@@ -159,6 +159,17 @@ struct VirtMachineState {
     struct arm_boot_info bootinfo;
     MemMapEntry *memmap;
     char *pciehb_nodename;
+    /*
+     * Optional benign catch-all over an otherwise-unmodelled MMIO window
+     * (e.g. an SoC peripheral register space). When mmio_catchall_size is
+     * non-zero, machvirt_init() maps an "unimplemented-device" covering
+     * [base, base+size) at low priority: reads return 0, writes are ignored
+     * and logged, so a guest driver probing that space gets benign values
+     * instead of a CPU external abort. Configured via the machine properties
+     * "mmio-catchall-base" / "mmio-catchall-size"; OFF (size 0) by default.
+     */
+    hwaddr mmio_catchall_base;
+    hwaddr mmio_catchall_size;
     const int *irqmap;
     int fdt_size;
     uint32_t clock_phandle;

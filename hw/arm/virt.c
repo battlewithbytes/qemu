@@ -29,6 +29,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/cutils.h"
 #include "qemu/datadir.h"
 #include "qemu/units.h"
 #include "qemu/option.h"
@@ -37,6 +38,7 @@
 #include "hw/arm/boot.h"
 #include "hw/arm/primecell.h"
 #include "hw/arm/virt.h"
+#include "hw/misc/unimp.h"
 #include "hw/block/flash.h"
 #include "hw/vfio/vfio-calxeda-xgmac.h"
 #include "hw/vfio/vfio-amd-xgbe.h"
@@ -2314,6 +2316,21 @@ static void machvirt_init(MachineState *machine)
 
     create_platform_bus(vms);
 
+    /*
+     * Optional benign catch-all over an unmodelled MMIO window (e.g. an SoC
+     * peripheral register space that vendor kernel drivers poke during probe).
+     * Mapped at priority -1000 by create_unimplemented_device(), so every real
+     * virt device still takes precedence and only otherwise-unassigned accesses
+     * land here: reads return 0, writes are ignored (both logged via LOG_UNIMP).
+     * This turns a guest CPU external abort on unassigned MMIO into a harmless
+     * read/write. OFF unless "mmio-catchall-size" is set non-zero.
+     */
+    if (vms->mmio_catchall_size != 0) {
+        create_unimplemented_device("mmio-catchall",
+                                    vms->mmio_catchall_base,
+                                    vms->mmio_catchall_size);
+    }
+
     if (machine->nvdimms_state->is_enabled) {
         const struct AcpiGenericAddress arm_virt_nvdimm_acpi_dsmio = {
             .space_id = AML_AS_SYSTEM_MEMORY,
@@ -2506,6 +2523,46 @@ static void virt_set_oem_table_id(Object *obj, const char *value,
         return;
     }
     strncpy(vms->oem_table_id, value, 8);
+}
+
+static char *virt_get_mmio_catchall_base(Object *obj, Error **errp)
+{
+    VirtMachineState *vms = VIRT_MACHINE(obj);
+
+    return g_strdup_printf("0x%" HWADDR_PRIx, vms->mmio_catchall_base);
+}
+
+static void virt_set_mmio_catchall_base(Object *obj, const char *value,
+                                        Error **errp)
+{
+    VirtMachineState *vms = VIRT_MACHINE(obj);
+    uint64_t v;
+
+    if (qemu_strtou64(value, NULL, 0, &v) < 0) {
+        error_setg(errp, "Invalid mmio-catchall-base value '%s'", value);
+        return;
+    }
+    vms->mmio_catchall_base = v;
+}
+
+static char *virt_get_mmio_catchall_size(Object *obj, Error **errp)
+{
+    VirtMachineState *vms = VIRT_MACHINE(obj);
+
+    return g_strdup_printf("0x%" HWADDR_PRIx, vms->mmio_catchall_size);
+}
+
+static void virt_set_mmio_catchall_size(Object *obj, const char *value,
+                                        Error **errp)
+{
+    VirtMachineState *vms = VIRT_MACHINE(obj);
+    uint64_t v;
+
+    if (qemu_strtou64(value, NULL, 0, &v) < 0) {
+        error_setg(errp, "Invalid mmio-catchall-size value '%s'", value);
+        return;
+    }
+    vms->mmio_catchall_size = v;
 }
 
 
@@ -3098,6 +3155,23 @@ static void virt_machine_class_init(ObjectClass *oc, void *data)
                                           "Override the default value of field OEM Table ID "
                                           "in ACPI table header."
                                           "The string may be up to 8 bytes in size");
+
+    object_class_property_add_str(oc, "mmio-catchall-base",
+                                  virt_get_mmio_catchall_base,
+                                  virt_set_mmio_catchall_base);
+    object_class_property_set_description(oc, "mmio-catchall-base",
+                                          "Base address of a benign catch-all MMIO region "
+                                          "that returns 0 on read and ignores writes "
+                                          "(default 0). Only active when mmio-catchall-size "
+                                          "is non-zero.");
+
+    object_class_property_add_str(oc, "mmio-catchall-size",
+                                  virt_get_mmio_catchall_size,
+                                  virt_set_mmio_catchall_size);
+    object_class_property_set_description(oc, "mmio-catchall-size",
+                                          "Size in bytes of the benign catch-all MMIO region. "
+                                          "0 (default) disables it. Accepts a 0x-prefixed hex "
+                                          "or decimal value.");
 
 }
 
