@@ -11,6 +11,7 @@
 #include "exec/address-spaces.h"
 #include "sysemu/hostmem.h"
 #include "sysemu/cpus.h"
+#include "sysemu/hw_accel.h"
 #include "qemu/module.h"
 #include "qemu/units.h"
 

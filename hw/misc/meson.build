@@ -1,4 +1,4 @@
-system_ss.add(when: 'CONFIG_ARM_VIRT', if_true: files('cockpit-devices.c'))
+system_ss.add(when: 'CONFIG_ARM_VIRT', if_true: files('cockpit-devices.c', 'cockpit-sspm.c'))
 system_ss.add(when: 'CONFIG_APPLESMC', if_true: files('applesmc.c'))
 system_ss.add(when: 'CONFIG_EDU', if_true: files('edu.c'))
 system_ss.add(when: 'CONFIG_FW_CFG_DMA', if_true: files('vmcoreinfo.c'))
