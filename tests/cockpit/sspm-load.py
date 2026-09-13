@@ -26,7 +26,7 @@ def main():
             argv = [binary, "-machine", "virt", "-accel", accel, "-cpu", cpu, "-m", "128",
                 "-nic", "none", "-display", "none", "-serial", "none", "-monitor", "none",
                 "-device", f"loader,file={root}/probe.bin,addr=0x40200000,cpu-num=0,force-raw=on",
-                "-device", f"cockpit-sspm-mailbox,analysis=on,addr=0x10450000,ctrl-addr=0x10451000,boot-layout={root}/seed",
+                "-device", f"cockpit-sspm-mailbox,analysis=on,ram-size=4096,addr=0x10450000,ctrl-addr=0x10451000,boot-layout={root}/seed",
                 "-qtest", f"unix:{endpoint},server=on,wait=off", "-qtest-log", "/dev/null"]
             proc = subprocess.Popen(argv, stderr=subprocess.PIPE)
             conn = socket.socket(socket.AF_UNIX)
@@ -52,10 +52,9 @@ def main():
                     record = dict(accel=accel, status=read(0), simple_load=hex(read(4)),
                                   postindex_load=hex(read(8)), esr=hex(read(16)),
                                   fault_pc=hex(read(24)))
-                    assert record["status"] in (1, 2), record
+                    assert record["status"] == 1, record
                     assert record["simple_load"] == "0x4d010003", record
-                    if accel == "tcg" or record["status"] == 1:
-                        assert record["status"] == 1 and record["postindex_load"] == "0x4d010003", record
+                    assert record["postindex_load"] == "0x4d010003", record
                     records.append(record)
             finally:
                 conn.close()

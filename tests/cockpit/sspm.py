@@ -17,8 +17,8 @@ def main():
         seed.write_bytes(bytes.fromhex("0300014d") + bytes(252))
         prefix = [binary, "-machine", "virt", "-cpu", "cortex-a72", "-m", "128",
                   "-nic", "none", "-display", "none", "-serial", "none", "-monitor", "none", "-S"]
-        device = f"cockpit-sspm-mailbox,analysis=on,addr=0x10450000,ctrl-addr=0x10451000,boot-layout={seed}"
-        second = "cockpit-sspm-mailbox,analysis=on,addr=0x10460000,ctrl-addr=0x10461000"
+        device = f"cockpit-sspm-mailbox,analysis=on,ram-size=4096,addr=0x10450000,ctrl-addr=0x10451000,boot-layout={seed}"
+        second = "cockpit-sspm-mailbox,analysis=on,ram-size=4096,addr=0x10460000,ctrl-addr=0x10461000"
         proc = subprocess.Popen(prefix + ["-device", device, "-device", second, "-qtest",
             f"unix:{root}/qtest,server=on,wait=off", "-qtest-log", "/dev/null",
             "-qmp", f"unix:{root}/qmp,server=on,wait=off"], stderr=subprocess.PIPE)
@@ -69,7 +69,11 @@ def main():
                 assert read(0x10451004) == 0, "fabricated receive completion"
                 cmd("writel 0x10451004 0xffffffff")
                 assert read(0x10451004) == 0
-                assert read(0x10450100) == 0xffffffff, "overmapped bank"
+                assert read(0x10450100) == 0, "owned padding must start zero"
+                cmd("writel 0x10450ffc 0x87654321")
+                assert read(0x10450ffc) == 0x87654321
+                assert read(0x10451008) == 0xffffffff, "mapping escaped owned extent"
+                assert read(0x1044fffc) == 0xffffffff, "mapping escaped below owned extent"
                 qcmd("system_reset")
                 # QMP acknowledges the reset request before the main loop
                 # necessarily performs it; wait for the observable state.
@@ -79,25 +83,42 @@ def main():
                     time.sleep(.01)
                 assert read(0x10450000) == 0x4d010003
                 assert read(0x104500fc) == 0
+                assert read(0x10450ffc) == 0
                 assert read(0x10451000) == 0
                 assert read(0x10460000) == 0
         finally:
             conn.close()
             qmp.close()
             proc.terminate()
-            proc.communicate(timeout=10)
+            _, error = proc.communicate(timeout=10)
+            if proc.returncode not in (0, -15):
+                print(error.decode(errors="replace"), flush=True)
         for invalid in (device.replace("analysis=on", "analysis=off"),
                         device.replace("addr=0x10450000", "addr=0x40000000"),
                         device.replace("ctrl-addr=0x10451000", "ctrl-addr=0x10450004"),
                         device + ",addr=0x10450001",
-                        device.replace(str(seed), str(root / "missing"))):
+                        device.replace(str(seed), str(root / "missing")),
+                        device.replace(",ram-size=4096", ""),
+                        device.replace("ram-size=4096", "ram-size=256"),
+                        device.replace("ram-size=4096", "ram-size=6144"),
+                        device.replace("ram-size=4096", "ram-size=131072"),
+                        device.replace("ctrl-addr=0x10451000", "ctrl-addr=0x10450800")):
             result = subprocess.run(prefix + ["-device", invalid], capture_output=True, timeout=5)
             assert result.returncode != 0, invalid
         result = subprocess.run(prefix + ["-device", device, "-device", device], capture_output=True, timeout=5)
         assert result.returncode != 0, "overlapping devices accepted"
+        # The beginning of this page is empty PCI aperture, but an existing
+        # control region occupies its middle. Check the *whole* RAM extent.
+        inner_ctrl = second.replace("ctrl-addr=0x10461000", "ctrl-addr=0x10450800")
+        result = subprocess.run(prefix + ["-device", inner_ctrl, "-device", device],
+                                capture_output=True, timeout=5)
+        assert result.returncode != 0, "partial page collision accepted"
+        result = subprocess.run(prefix + ["-device", device, "-device", inner_ctrl],
+                                capture_output=True, timeout=5)
+        assert result.returncode != 0, "control mapped over existing RAM"
         seed.write_bytes(b"short")
         assert subprocess.run(prefix + ["-device", device], capture_output=True, timeout=5).returncode != 0
-    print("PASS: SSPM bank storage, partial access, doorbell/no reply, reset, isolation, seven refusals")
+    print("PASS: SSPM RAM/padding, partial access, doorbell/no reply, reset, isolation and mapping refusals")
 
 
 if __name__ == "__main__":
